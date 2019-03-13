@@ -6,10 +6,11 @@ import functools
 import inspect
 import logging
 import time
+import six
 from concurrent.futures import ThreadPoolExecutor, TimeoutError
 
 from common_cache.cleanup import CleanupSupervisorThread, basic_cleanup
-from common_cache.eviction import EvictionStrategy
+from common_cache.eviction import lru_for_evict
 from common_cache.utils import get_function_signature, init_logger, RWLock
 
 DEFAULT_THREAD_NUMBER = 8
@@ -101,7 +102,7 @@ def _check_function_obj(param_length):
                 self.logger.warning('Parameter %s must be a function object' % func_name)
                 return False
 
-            if len(inspect.signature(func_obj).parameters) != param_length:
+            if len(inspect.getargspec(func).args) != param_length:
                 self.logger.warning('Parameter %s must be have %s parameters' % (func_name, param_length))
                 return False
 
@@ -112,7 +113,7 @@ def _check_function_obj(param_length):
     return decorator
 
 
-def _init_thread_pool(max_workers=DEFAULT_THREAD_NUMBER, thread_name_prefix='COMMON-CACHE-'):
+def _init_thread_pool(max_workers=DEFAULT_THREAD_NUMBER):
     if max_workers <= 0:
         max_workers = DEFAULT_THREAD_NUMBER
 
@@ -124,7 +125,7 @@ def _init_thread_pool(max_workers=DEFAULT_THREAD_NUMBER, thread_name_prefix='COM
     except (ImportError, NotImplementedError):
         pass
 
-    return ThreadPoolExecutor(max_workers=max_workers, thread_name_prefix=thread_name_prefix)
+    return ThreadPoolExecutor(max_workers=max_workers)
 
 
 class CacheItem(dict):
@@ -268,10 +269,10 @@ class Cache(object):
     'data from cache'
     """
 
-    logging.basicConfig(level=logging.INFO, format='%(asctime)s:%(levelname)s:%(message)s')
+    #logging.basicConfig(level=logging.INFO, format='%(asctime)s:%(levelname)s:%(message)s')
     cache_instance_id_counter = 0
 
-    def __init__(self, capacity=1024, expire=60, evict_func=EvictionStrategy.LRU,
+    def __init__(self, capacity=1024, expire=60, evict_func=lru_for_evict,
                  evict_number=1, instance_name='CACHE-INSTANCE', cleanup_func=basic_cleanup,
                  regularly_cleanup=True, regularly_cleanup_interval=60, is_concurrent=True,
                  read_after_refresh_expire=True, log_filename=None, log_format=None, log_level=logging.INFO,
@@ -305,7 +306,7 @@ class Cache(object):
             self.logger.info('initialize thread pool is completed %s' % self.thread_pool)
 
         self.logger.info('initialize the parameter list: ...')
-        for k, v in self.__dict__.items():
+        for k, v in six.iteritems(self.__dict__):
             self.logger.info('  %s ---> %s' % (k, v))
 
         self.evict_func = evict_func
@@ -604,7 +605,7 @@ class Cache(object):
 
     def _generate_statistic_records_by_keys(self, keys):
         records = []
-        for key, item in self.cache_items.items():
+        for key, item in six.iteritems(self.cache_items):
             if key in keys:
                 records.append(item.statistic_record(self.total_access_count))
         return records
@@ -700,6 +701,8 @@ class Cache(object):
                         cache_result = cache_loader(k)
                     elif self.cache_loader is not None:
                         cache_result = self.cache_loader(k)
+                        if cache_result: #Bring to local cache
+                            self.put(key=k, value=cache_result, expire=expire, timeout=timeout)
                 # if still miss then execute a function that is decorated
                 # then update cache on the basis of parameter auto_update
                 if cache_result is not None:
@@ -722,7 +725,7 @@ class Cache(object):
     @_enable_thread_pool
     @_enable_lock
     @_enable_cleanup
-    def get(self, key, timeout=1, is_async=False, only_read=True):
+    def get(self, key, timeout=1, is_async=False, only_read=True, secondary_read=False, auto_update=False):
         """
         Test:
 
@@ -750,7 +753,12 @@ class Cache(object):
         """
         if key not in self.cache_items:
             self.logger.debug('Cache item <%s> missing' % key)
-            return None
+            value = None
+            if secondary_read and self.cache_loader:
+                value = self.cache_loader(key)
+                if value and auto_update and not only_read:
+                    self.put(key, value)
+            return value
 
         item = self.cache_items.pop(key)
         item.update_hit_count()
@@ -764,7 +772,7 @@ class Cache(object):
     @_enable_thread_pool
     @_enable_lock
     @_enable_cleanup
-    def put(self, key, value, expire=None, timeout=1, is_async=True, only_read=False):
+    def put(self, key, value, expire=None, timeout=1, is_async=True, only_read=False, auto_update=False):
         """
         Test:
 
@@ -781,6 +789,8 @@ class Cache(object):
         if expire is None:
             expire = self.expire
         self.cache_items[key] = CacheItem(key=key, value=value, expire=expire)
+        if auto_update and self.cache_writer:
+            self.thread_pool.submit(self.cache_writer, key, value)
 
     @_enable_thread_pool
     @_enable_lock
@@ -862,7 +872,7 @@ class Cache(object):
     def __repr__(self, only_read=True):
         if not self:
             return '%s()' % (self.__class__.__name__,)
-        return '%s(%r)' % (self.__class__.__name__, list(self.cache_items.items()))
+        return '%s(%r)' % (self.__class__.__name__, list(six.iteritems(self.cache_items)))
 
     @_enable_lock
     def __eq__(self, other, only_read=True):
@@ -878,7 +888,7 @@ class Cache(object):
     @_enable_thread_pool
     @_enable_lock
     def items(self, timeout=2, is_async=False, only_read=True):
-        return self.cache_items.items()
+        return six.iteritems(self.cache_items)
 
     @_enable_thread_pool
     @_enable_lock

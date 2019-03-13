@@ -1,9 +1,10 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
-import datetime
 import threading
 import time
 import weakref
+import six
+import datetime
 
 
 def basic_cleanup(self):
@@ -30,7 +31,7 @@ def basic_cleanup(self):
     keys_to_delete = []
     if self.expire is not None and self.expire > 0:
         # cleanup invalid cache item until the meet valid cache item and record next expire time
-        for k, item in self.cache_items.items():
+        for k, item in six.iteritems(self.cache_items):
             if item.is_dead():
                 keys_to_delete.append(k)
             else:
@@ -60,7 +61,9 @@ class CleanupSupervisorThread(threading.Thread):
         self.interval = interval
         self.logger = logger
         self.flag = True
-        super(CleanupSupervisorThread, self).__init__(name=name, daemon=daemon)
+        super(CleanupSupervisorThread, self).__init__(name=name)
+        if daemon:
+            self.setDaemon(True)
 
     def stop(self):
         self.flag = False

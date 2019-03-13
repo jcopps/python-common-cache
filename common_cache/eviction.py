@@ -1,6 +1,7 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 import collections
+import six
 
 
 def fifo_for_evict(cache_dict, evict_number=1):
@@ -28,7 +29,7 @@ def fifo_for_evict(cache_dict, evict_number=1):
     >>> len(evicted_keys)
     1
     """
-    ordered_dict = sorted(cache_dict.items(), key=lambda t: t[1]['birthday'])
+    ordered_dict = sorted(six.iteritems(cache_dict), key=lambda t: t[1]['birthday'])
     evicted_keys = []
     if len(cache_dict) < evict_number:
         evict_number = len(cache_dict)
@@ -109,7 +110,7 @@ def lfu_for_evict(cache_dict, evict_number=1):
     >>> len(dict)
     0
     """
-    ordered_dict = sorted(cache_dict.items(), key=lambda t: t[1]['hit_counts'])
+    ordered_dict = sorted(six.iteritems(cache_dict), key=lambda t: t[1]['hit_counts'])
     evicted_keys = []
     if len(cache_dict) < evict_number:
         evict_number = len(cache_dict)

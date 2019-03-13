@@ -4,7 +4,7 @@ import inspect
 import logging
 import sys
 import threading
-from queue import Queue
+from six.moves  import queue
 
 
 def get_function_signature(func):
@@ -31,8 +31,7 @@ def get_function_signature(func):
     if not inspect.isfunction(func):
         raise TypeError('The argument must be a function object: %s type is %s' % (func_name, type(func)))
 
-    return func_name + str(inspect.signature(func))
-
+    return func_name + str(inspect.getargspec(func))
 
 def init_logger(self, level, name, filename, format):
     logger = logging.getLogger(self.__class__.__name__ + '<%s>' % name)
@@ -59,7 +58,7 @@ class RWLock(object):
     def __init__(self, max_reader_concurrency=sys.maxsize):
         self.mutex = threading.RLock()
         self.writers_waiting = 0
-        self.writers_waiting_queue = Queue()
+        self.writers_waiting_queue = queue.Queue()
         self.rwlock = 0
         self.readers_ok = threading.Condition(self.mutex)
         self.max_reader_concurrency = max_reader_concurrency
